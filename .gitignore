@@ -1,5 +1,6 @@
 stuff.py
 data/*
+data/prep_enwik8.py
 src/LM-TFM-enwik8/*
 __pycache__/
  *.pyc

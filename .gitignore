@@ -1,0 +1,5 @@
+stuff.py
+data/*
+src/LM-TFM-enwik8/*
+__pycache__/
+ *.pyc

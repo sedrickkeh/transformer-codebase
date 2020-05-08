@@ -1,4 +1,6 @@
 import torch.nn as nn
+import torch.nn.functional as F
+
 from onmt.encoders.transformer import TransformerEncoder
 from onmt.decoders.transformer import TransformerDecoder
 from onmt.modules.embeddings import Embeddings
@@ -11,15 +13,29 @@ class TransformerBase(nn.Module):
 
         # Initializing a BERT bert-base-uncased style configuration
         self.configuration = BertConfig()
-        self.configuration["num_attention_heads"] = n_head
-        self.configuration["num_hidden_layers"] = n_layer
+        self.configuration.vocab_size = ntokens
+        self.configuration.hidden_size = d_inner
+        self.configuration.num_hidden_layers = n_layer
+        self.configuration.num_attention_heads = n_head
+        self.configuration.hidden_dropout_prob = dropout
+        self.configuration.attention_probs_dropout_prob = dropatt
         
         # Initializing a model from the bert-base-uncased style configuration
-        self.model = BertModel(self.configuration)
+        self.bertmodel = BertModel(self.configuration)
+        self.generator = Generator(d_inner, ntokens)
 
     def forward(self, data, target, *mems):
-        a = self.model(data)
-        print(len(a))
-        print(a[0].shape)
-        print(a[1].shape)
-        print(self.configuration)
+        tgt_len = target.size(0)
+        a = self.bertmodel(data)
+        pred_hid = a[0][-tgt_len:]
+        b = self.generator(a[0], target)
+        return b
+
+class Generator(nn.Module):
+    "Define standard linear + softmax generation step."
+    def __init__(self, d_model, vocab):
+        super(Generator, self).__init__()
+        self.proj = nn.Linear(d_model, vocab)
+
+    def forward(self, x, target):
+        return F.log_softmax(self.proj(x), dim=-1)

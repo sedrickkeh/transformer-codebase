@@ -1,41 +1,63 @@
+import math
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
-from onmt.encoders.transformer import TransformerEncoder
-from onmt.decoders.transformer import TransformerDecoder
-from onmt.modules.embeddings import Embeddings
-from transformers import BertModel, BertConfig
 
-class TransformerBase(nn.Module):
-    def __init__(self, ntokens, n_layer, n_head, d_model, 
-        d_head, d_inner, dropout, dropatt):
-        super(TransformerBase, self).__init__()
+## Adapt the PyTorch implementation at 
+## https://pytorch.org/tutorials/beginner/transformer_tutorial.html
 
-        # Initializing a BERT bert-base-uncased style configuration
-        self.configuration = BertConfig()
-        self.configuration.vocab_size = ntokens
-        self.configuration.hidden_size = d_inner
-        self.configuration.num_hidden_layers = n_layer
-        self.configuration.num_attention_heads = n_head
-        self.configuration.hidden_dropout_prob = dropout
-        self.configuration.attention_probs_dropout_prob = dropatt
-        
-        # Initializing a model from the bert-base-uncased style configuration
-        self.bertmodel = BertModel(self.configuration)
-        self.generator = Generator(d_inner, ntokens)
+class TransformerModel(nn.Module):
+    def __init__(self, ntokens, d_model, n_head, d_inner, n_layer, dropout=0.5):
+        super(TransformerModel, self).__init__()
+        self.src_mask = None
+        self.pos_encoder = PositionalEncoding(d_model, dropout)
+        encoder_layers = TransformerEncoderLayer(d_model, n_head, d_inner, dropout)
+        self.transformer_encoder = TransformerEncoder(encoder_layers, n_layer)
+        self.encoder = nn.Embedding(ntokens, d_model)
+        self.d_model = d_model
+        self.decoder = nn.Linear(d_model, ntokens)
 
-    def forward(self, data, target, *mems):
-        tgt_len = target.size(0)
-        a = self.bertmodel(data)
-        pred_hid = a[0][-tgt_len:]
-        b = self.generator(a[0], target)
-        return b
+        self.init_weights()
 
-class Generator(nn.Module):
-    "Define standard linear + softmax generation step."
-    def __init__(self, d_model, vocab):
-        super(Generator, self).__init__()
-        self.proj = nn.Linear(d_model, vocab)
+    def _generate_square_subsequent_mask(self, sz):
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
 
-    def forward(self, x, target):
-        return F.log_softmax(self.proj(x), dim=-1)
+    def init_weights(self):
+        initrange = 0.1
+        self.encoder.weight.data.uniform_(-initrange, initrange)
+        self.decoder.bias.data.zero_()
+        self.decoder.weight.data.uniform_(-initrange, initrange)
+
+    def forward(self, src, target):
+        if self.src_mask is None or self.src_mask.size(0) != len(src):
+            device = src.device
+            mask = self._generate_square_subsequent_mask(len(src)).to(device)
+            self.src_mask = mask
+
+        src = self.encoder(src) * math.sqrt(self.d_model)
+        src = self.pos_encoder(src)
+        output = self.transformer_encoder(src, self.src_mask)
+        output = self.decoder(output)
+        return F.log_softmax(output, dim=-1)
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe[:x.size(0), :]
+        return self.dropout(x)

@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from model import TransformerBase
+from model import TransformerModel
 from data_utils import get_lm_corpus
 from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
@@ -264,15 +264,12 @@ if args.restart:
     model.apply(update_dropatt)
 else:
     # Train from the start
-    model = TransformerBase(ntokens, args.n_layer, args.n_head, args.d_model,
-        args.d_head, args.d_inner, args.dropout, args.dropatt)
-    # model = MemTransformerLM(ntokens, args.n_layer, args.n_head, args.d_model,
-        # args.d_head, args.d_inner, args.dropout, args.dropatt,
-        # tie_weight=args.tied, d_embed=args.d_embed, div_val=args.div_val,
-        # tie_projs=tie_projs, pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
-        # ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
-        # same_length=args.same_length, attn_type=args.attn_type,
-        # clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
+    model = TransformerModel(ntokens, args.d_model, args.n_head, args.d_inner, args.n_layer, args.dropout)
+
+    for p in model.parameters():
+        p.requires_grad_(True)
+    model.train()
+
     model.apply(weights_init)
 args.n_all_param = sum([p.nelement() for p in model.parameters()])
 
@@ -384,7 +381,7 @@ def evaluate(eval_iter):
         for i, (data, target, seq_len) in enumerate(eval_iter):
             if args.max_eval_steps > 0 and i >= args.max_eval_steps:
                 break
-            out = model(data, target, *mems)
+            out = model(data, target)
             out = out.view(-1, out.size(-1))
 
             loss = torch.nn.functional.nll_loss(out, target.view(-1))
